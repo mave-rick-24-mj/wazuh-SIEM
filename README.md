@@ -1,130 +1,47 @@
 # Multi-Container Wazuh SIEM Deployment & Troubleshooting Guide
 
-A comprehensive guide documenting the end-to-end deployment of a single-node Wazuh SIEM stack on Kali Linux via Docker Compose. This document walks through diagnosing system dependency issues, adjusting kernel constraints, correcting JVM security manager certificate permission locks, and achieving a successful deployment.
+A comprehensive guide documenting the end-to-end deployment of a single-node Wazuh SIEM stack on Kali Linux via Docker Compose. This document walks through diagnosing system dependency issues, adjusting kernel constraints, correcting JVM security manager certificate permission locks, and achieving a successful production deployment.
+
+> **Detailed Technical Documentation:** For the complete, step-by-step penetration testing and SIEM logging documentation, refer to the [Comprehensive Workflow Document](workflow.md).
 
 ---
 
-## 📊 Deployment Timeline & Diagnostic Index
+## 📊 Executive Summary
 
-The following sequential log tracks the development roadmap from initial installation failures to production health.
+This project documents the transition from a failed bare-metal/local package installation to a fully functional, containerized Wazuh SIEM stack on Kali Linux. By addressing underlying system service conflicts, host kernel limitations, and cryptographic asset permissions, the environment was successfully stabilized into a multi-container architecture.
 
-### Step 1: Initial Local Package Dependency Issues
-* **Status:** Failed ❌
-* **Context:** Attempted to install components locally alongside browser documentation, leading to socket connectivity blocks due to systemctl control layer failures.
-
-
-![Package Manager Install](./Assets/install.png)
-![Connection Refused State](./Assets/dasheneg.png)
-
-
-```
-
-[Connection Refused] Firefox cannot establish a connection to the server at localhost:5601.
-
-```
+### Key Highlights
+* **Architectural Migration:** Shifted from local package deployment to Docker Compose containerization to ensure service isolation and dependency control.
+* **Kernel Level Tuning:** Identified and resolved OpenSearch cluster boot failures by reconfiguring Linux kernel virtual memory map limits.
+* **Java Security Compliance:** Remedied certificate read exceptions caused by POSIX permission mismatches across persistent volume mounts.
+* **Release Pinning:** Established deployment stability by locking component image builds to verified release tags (`v4.9.0`).
 
 ---
 
-### Step 2: Systemctl Service & Missing Certificate Verification
-* **Status:** Failed ❌
-* **Context:** Checking system engine initial states. The database indexer cluster logs exposed an immediate crash during the bootstrap phase because the security plugin could not read or locate the cryptographic assets.
+## 🛠️ Deployment & Troubleshooting Roadmap
 
-![Systemctl Unit Failure States](./Assets/error.png)
-![Stack Trace Breakdown](./Assets/logs.png)
+### 1. Initial Local Package Installation Failures
+* **Service Conflicts:** Direct package installations failed due to systemctl control layer blocks, resulting in socket connection refusals on port `5601`.
+* **Cryptographic Locks:** OpenSearch database indexer failed to bootstrap because the security plugin could not locate or read `/etc/wazuh-indexer/certs/root-ca.pem`.
 
+### 2. Container Migration & Kernel Remediation
+* **Environment Isolation:** Migrated to Docker Compose to decouple components into isolated single-purpose containers (`indexer`, `manager`, `dashboard`).
+* **Kernel Restrictions:** Solved container crash loops caused by the default `vm.max_map_count` allocation being lower than the OpenSearch runtime threshold (`262144`).
+* **Volume Purging:** Cleared stale volume caches and invalid path locks using `docker compose down -v`.
 
-```
-
-java.lang.IllegalStateException: failed to load plugin class [org.opensearch.security.OpenSearchSecurityPlugin]
-Caused by: org.opensearch.OpenSearchException: Unable to read the file /etc/wazuh-indexer/certs/root-ca.pem.
-
-```
-
----
-
-### Step 3: Transition to Container Platform & Kernel Constraints
-* **Status:** Failed ❌
-* **Context:** Migrated the architecture to Docker Compose to ensure isolation. The environment encountered a secondary bottleneck: the Linux kernel virtual memory allocation parameters (`vm.max_map_count`) were restricted below OpenSearch operational minimums, while active volume caches locked in bad certificate paths.
-
-![Docker Engine Runtime Checks](./Assets/dockeractive.png)
-![Unhealthy Multi-Container Loop](./Assets/composing.png)
-
-
-```
-
-✘ Container single-node-wazuh.indexer    Error
-dependency failed to start: container single-node-wazuh.indexer is unhealthy
-
-```
+### 3. Stack Resolution & Health Verification
+* **Permission Alignment:** Applied strict `1000:1000` UID/GID ownership and `750` folder permissions to satisfy Java Security Manager policies inside containers.
+* **Version Locking:** Pinned `wazuh-docker` to tag `v4.9.0` to eliminate component version mismatches across the stack.
+* **Verified Health:** Successfully initialized the 4-container stack into a `Healthy` / `Running` operational status.
 
 ---
 
-### Step 4: Resolution & Verified Production Status
-* **Status:** Operational / Healthy ✅
-* **Context:** Executed a system cache volume purge (`down -v`), adjusted host kernel map counts, locked Git trees to release tags, and enforced strict `1000:1000` owner access configurations directly into the local persistent volume spaces.
+## 🚀 Production Remediation Playbook
 
-![Wazuh Successful Dashboard Login](./Assets/dashboard.png)
+To replicate the stable, operational Wazuh SIEM environment in a clean workspace, execute the following steps:
 
-![Wazuh Stack Container Health](./Assets/complete.png)
-
-![Repository Setup](./Assets/wazuhweb.png)
-```
-
-[+] Running 4/4
-✔ Container single-node-wazuh.indexer    Healthy
-✔ Container single-node-wazuh.manager    Running
-✔ Container single-node-wazuh.dashboard  Running
-
-```
-
----
-
-## 🛠️ Production Remediation Playbook
-
-To reproduce the stable environment configurations achieved at the project completion phase, run the following command groups inside a clean workspace:
-
-### 1. Tune Linux Kernel Engine
-Increase the default virtual memory map capacities to prevent thread termination crashes:
+### Step 1: Tune Host Linux Kernel
+Increase the virtual memory map capacities to satisfy OpenSearch operational minimums:
 ```bash
 sudo sysctl -w vm.max_map_count=262144
 echo "vm.max_map_count=262144" | sudo tee -a /etc/sysctl.conf
-
-```
-
-### 2. Lock Repository Stable Release Tag
-
-Avoid version mismatch drops across disparate component images by pinning the repository tag:
-
-```bash
-cd ~
-git clone [https://github.com/wazuh/wazuh-docker.git](https://github.com/wazuh/wazuh-docker.git) -b v4.9.0
-cd wazuh-docker/single-node
-
-```
-
-### 3. Generate Certs & Enforce Java Security Compliance
-
-Execute the generation containers, then apply standard POSIX access controls matching the internal container engine UID (`1000`):
-
-```bash
-# Generate cluster internal keys
-sudo docker compose -f generate-indexer-certs.yml run --rm generator
-
-# Restrict permissions to satisfy internal Java Security Manager policies
-sudo chown -R 1000:1000 config/
-sudo chmod -R 750 config/
-
-```
-
-### 4. Deploy Isolated Stack Cleanly
-
-```bash
-# Clear any remaining volume cache footprints and launch
-sudo docker compose down -v
-sudo docker compose up -d
-
-```
-
-```
-
-```
